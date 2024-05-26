@@ -183,3 +183,172 @@ public void Purchase_succeeds_when_enough_inventory()
 - 테스트가 제품 코드의 기능을 무조건 나열하면 안 됨
 - 오히려 애플리케이션 동작에 대한 고수준의 명세가 있어야 함
 - 비즈니스 담당자에게도 의미가 있어야 함
+
+### 3.3 테스트 간 테스트 픽스처 재사용
+
+테스트 픽스처란
+
+- 테스트 실행 대상 객체
+- 이 객체는 정규 의존성, 즉 SUT로 전달되는 인수
+- 각 테스트 실행 전에 알려진 고정 상태로 유지하기 때문에 동일한 결과를 생성함
+
+테스트 픽스처를 재사용하는 방법
+
+1. 테스트 생성자에서 픽스처를 초기화하는 것
+2.
+
+**테스트 생성자에서 픽스처를 초기화**
+
+- 테스트 코드의 양을 크게 줄일 수 있으며, 테스트 픽스처 구성을 전부 또는 대부분 제거할 수 있음
+- 단점:
+  - 그러나 테스트간 결함도가 높아지고, 가독성이 떨어짐
+
+### 3.3.1 테스트 간의 높은 결함도는 안티 패턴
+
+```c#
+  private readonly Store _store;
+  private readonly Customer _sut;
+
+    public CustomerTests()
+    {
+      _store = new Store();
+      _store.AddInventory(Product.Shampoo, 10);
+      _sut = new Customer();
+    }
+
+    [Fact]
+    public void Purchase_succeeds_when_enough_inventory()
+    {
+        Store store = CreateStoreWithInventory(Product.Shampoo, 10);
+        Customer sut = CreateCustomer();
+
+        bool success = sut.Purchase(store, Product.Shampoo, 5);
+
+        Assert.True(success);
+        Assert.Equal(5, store.GetInventory(Product.Shampoo));
+    }
+
+    [Fact]
+    public void Purchase_fails_when_not_enough_inventory()
+    {
+        Store store = CreateStoreWithInventory(Product.Shampoo, 10);
+        Customer sut = CreateCustomer();
+
+        bool success = sut.Purchase(store, Product.Shampoo, 15);
+
+        Assert.False(success);
+        Assert.Equal(10, store.GetInventory(Product.Shampoo));
+    }
+
+```
+
+- 테스트 준비 로직을 수정하면 클래스의 모든 테스트에 영향을 미침
+- \_store.AddInventory(Product.Shampoo, 10)에서 상수 10을 15로 변경하게 되면 쓸데없이 테스트가 실패하게 된다.
+- 이는 중요한 지침을 위반하는데, 테스트를 수정해도 다른 테스트에 영향을 주어서는 안 됨
+- 테스트는 서로 격리돼 실행해야 한다는 것과 비슷함
+  - 근데 조금 다른 게 여기서는 테스트의 독립적인 수정이지, 독립적인 실행이 아님 (이게 무슨 소리..?)
+- 지침에 따르려면 테스트 클래스에 공유 상태를 두지 말아야 함
+
+### 3.3.1 테스트 간의 높은 결함도는 안티 패턴
+
+- 준비 코드를 생성자로 추출하면 테스트의 가독성이 떨어짐
+- 테스트만 보고 더 이상 전체 그림을 볼 수 없기 때문
+- 그렇기에 메서드로 옮기는 것이 좋음.(재사용성도 좋기 때문)
+
+### 3.3.3 더 나은 테스트 픽스처 재사용법
+
+```c#
+public class CustomerTests
+{
+    [Fact]
+    public void Purchase_succeeds_when_enough_inventory()
+    {
+        Store store = CreateStoreWithInventory(Product.Shampoo, 10);
+        Customer sut = CreateCustomer();
+
+        bool success = sut.Purchase(store, Product.Shampoo, 5);
+
+        Assert.True(success);
+        Assert.Equal(5, store.GetInventory(Product.Shampoo));
+    }
+
+    [Fact]
+    public void Purchase_fails_when_not_enough_inventory()
+    {
+        Store store = CreateStoreWithInventory(Product.Shampoo, 10);
+        Customer sut = CreateCustomer();
+
+        bool success = sut.Purchase(store, Product.Shampoo, 15);
+
+        Assert.False(success);
+        Assert.Equal(10, store.GetInventory(Product.Shampoo));
+    }
+
+    private Store CreateStoreWithInventory(Product product, int quantity)
+    {
+        Store store = new Store();
+        store.AddInventory(product, quantity);
+        return store;
+    }
+
+    private static Customer CreateCustomer()
+    {
+        return new Customer();
+    }
+}
+```
+
+- 위와 같이 변경하면 테스트 코드를 짧게 하면서, 동시에 테스트 진행 상황에 대한 전체 맥락을 유지할 수 있음
+- 또한 테스트가 서로 결합되지 않음(매개변수를 전달할 수 있기 때문)
+- 하지만 db 연결과 같이 대부분에 사용되는 생성자에는 픽스처를 인스턴스화 하는 것이 더 합리적임
+
+## 3.4 단위 테스트 명명법
+
+**단위 테스트 이름을 어떻게 정해야 하는가?**
+
+- 엄격한 명명규칙은 지키지 않는 게 좋음
+  - [테스트 대상 메서드]\_[시나리오]\_[예상결과]
+  - 가장 유명한 명명규칙임
+- 대신 간단하고 쉬운 영어 구문이 훨씬 더 효과적임
+
+ex) 두 수를 더하는 메서드
+
+- 엄격한 명명규칙: Sum_TwoNumbers_ReturnsSum
+- 간단한 명명규칙: Sum_of_two_numbers
+
+엄격한 명명규칙은 논리적으로 보이지만 실제로 도움이 되는지 생각해 보라.<br/>
+수수께끼 같은 이름은 프로그래머든 아니든 모두가 이해하는 데 부담이 된다.
+
+=> 그렇기에 쉬운 영어로 작성하라!
+
+### 3.4.1 단위 테스트 명명 지침
+
+- 엄격한 명명 정책을 따르지 않는다.
+- 비개발자들에게 시나리오를 설명하는 것처럼 테스트 이름을 짓자
+
+### 3.4.2 예제: 지침에 따른 테스트 이름 변경
+
+과거 배송일이 유효하지 않다는 것을 검증하는 테스트를 작성한다고 생각해보자.
+
+- IsDeliveryValid_InvalidDate_ReturnsFalse
+
+이 테스트는 잘못된 날짜의 배송을 올바르게 식별하는지 검증한다.<br/>
+쉬운 영어로 변경하면 아래와 같다.
+
+- Delivery_with_invalid_date_should_be_considered_invalid
+
+  - 이제 프로그래머 뿐만 아니라 다른 사람들도 쉽게 이해할 수 있다..?
+  - 더 이상 SUT의 메서드 이름이 포함되지 않는다.
+    - 근데 코드의 의도가 명확하게 드러나지 않는 것 같음
+
+- Delivery_with_past_date_is_invalid
+  - 과거 배송 날짜는 유효하지 않다
+  - 확실히 쉬운 영어로 하고, 의도가 드러나도록 작성하는 것이 이해하기 쉬운듯
+
+## 3.5 매개변수화된 테스트 리팩터링하기
+
+- 보통 테스트 하나로 동작 단위를 완전하게 설명하기에 충분하지 않음
+- 또한 테스트 수가 급격히 증가하면 관리가 어려워짐
+- 그렇기에 유사한 테스트를 묶는 기능을 활용
+- 묶어서 재사용하면 코드의 양을 크게 줄일 수 있지만, 테스트 메서드가 나타내는 사실을 파악하기 어려움
+  - 그렇기에 긍정 / 부정적인 시나리오를 분리하여 검증하는 것이 좋음
