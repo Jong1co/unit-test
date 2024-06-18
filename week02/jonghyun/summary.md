@@ -73,7 +73,7 @@ public void Purchase_succeeds_when_enough_inventory()
 
 - Store의 실제 인스턴스를 생성하지 않고, Mock으로 대체. 즉, Store를 사용하지 않음
 - 이전에는 Store의 상태를 검증했다면, 지금은 Customer와 Store의 상호작용을 검증함. 즉, RemoveInventory가 한 번 동작하는지를 검증함.
-  - 결과가 아니라 상호작용을 검증하는구나.
+  - 결과와 상호작용을 검증하는구나.
 
 ### 2.1.2 격리 문제에 대한 고전파의 접근
 
