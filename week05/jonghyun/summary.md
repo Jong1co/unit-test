@@ -19,7 +19,7 @@
 - 목: 목 프레임워크의 도움을 받아 생성됨
 - 더미: 단순하고 하드코딩된 값 (ex. null, 가짜 문자열)
 - 스텁: 시나리오마다 다른 값을 반환하게끔 구성할 수 있도록 필요한 것을 다 갖춘 완전한 의존성
-- 페이크: 대다수의 목적에 부합하는 스텁과 같음
+- 페이크: 대다수의 목적에 부합하는 스텁과 같음 (페이크가 뭘까?)
   - 스텁과 페이크의 차이점은 **생성**에 있음
   - 보통 아직 존재하지 않는 의존성을 대체하고자 구현함
 
@@ -189,3 +189,109 @@ public class UserController
   - 전체적으로 해당 시스템의 식별할 수 있는 동작을 나타냄
 - 목을 사용하면 시스템 간의 통신 패턴을 확인할 때 좋음
 - 반대로 시스템 내 클래스 간의 통신을 검증하는 데 사용하면 테스트가 구현 세부 사항과 결합되며, 그에 따라 리팩터링 내성 지표가 미흡해짐
+
+### 시스템 내부 통신과 시스템 간 통신의 예
+
+비즈니스 유스케이스
+
+- 고객이 상점에서 제품을 구매하려고 한다.
+- 매장 내 제품 수량이 충분하면
+  - 재고가 상점에서 줄어든다.
+  - 고객에게 이메일로 영수증을 발송한다.
+  - 확인 내역을 반환한다.
+
+```c#
+public class CustomerController
+{
+   public bool Purchase(int customerId, int productId, int quantity)
+   {
+       Customer customer = _customerRepository.GetById(customerId);
+       Product product = _productRepository.GetById(productId);
+
+       bool isSuccess = customer.Purchase(
+           _mainStore, product, quantity);
+
+       if (isSuccess)
+       {
+           _emailGateway.SendReceipt(
+               customer.Email, product.Name, quantity
+           );
+       }
+
+       return isSuccess;
+   }
+}
+```
+
+위 코드는 시스템 내부 통신과 시스템 간 통신이 모두 있는 비즈니스 유스케이스다.
+
+- 위에서 이메일을 전송은 고객의 목표에 직접적인 연관이 있는 사이드 이펙트이므로 식별할 수 있는 동작을 나타냄
+  - 목으로 하는 이유가 타당함
+- Customer와 Store 도메인 클래스 간의 통신은 시스템 내부 통신임
+
+```c#
+// 취약한 테스트로 이어지지 않는 목 사용
+public void Successful_purchase()
+{
+    var mock = new Mock<IEmailGateway>();
+    var sut = new CustomerController(mock.Object);
+
+
+    bool isSuccess = sut.Purchase(customerId: 1, productId: 2, quantity: 5);
+
+    Assert.Ture(isSuccess);
+    mock.Verify(
+        x => x.SendRequest(
+            “customer@email.com”, “Shampoo”, 5),
+        Times.Once); // 시스템이 구매에 대한 영수증을 보내는지 검증
+}
+
+// 취약한 테스트로 이어지는 목 사용
+public void Purchase_succeeds_when_enough_inventory()
+{
+    var storeMock = new Mock<IStore>();
+    storeMock
+        .Setup(x => x.HasEnoughInventory(Product.Shampoo, 5))
+        .Returns(true);
+    var customer = new Customer();
+
+    bool success = customer.Purchase(storeMock.Object, Product.Shampoo, 5);
+
+    Assert.Ture(success);
+    // Customer에서 Store 메서드의 호출은 애플리케이션 경계를 넘지 않음
+    // 또한 이 메서드는 클라이언트가 목표를 달성하는 데 도움이 되는 연산이나 상태가 아님
+    // 그렇기 때문에 이는 구형 세부 사항에 해당하고, 클라이언트로 가는 중간 단계이기에, 아래 검증은 진행하지 않아야 함
+    storeMock.Verify(
+        x => x.RemoveInventory(Product.Shampoo, 5),
+        Times.Once);
+}
+```
+
+### 고전파와 런던파 재고
+
+런던파는 불변 의존성을 제외한 모든 의존성에 목 사용을 권장하며, 시스템 내 통신과 시스템 간의 통신을 구분하지 않음
+
+- 즉, 모든 의존성을 목으로 만듬 -> 구현 세부 사항과 결합되어 리팩터링 내성이 없게 됨
+- 고전파는 테스트 간 공유하는 의존성만 교체하자고 하므로 이 문제에 대해서 훨씬 유리함
+  - 하지만 고전파 또한 목 사용을 지나치게 장려함
+  - 모든 프로세스 외부 의존성을 목으로 해야 하는 것은 아니다
+
+### 모든 프로세스 외부 의존성을 목으로 해야 하는 것은 아니다
+
+- 일반적으로 공유 의존성(데이터베이스, 메세지 버스)를 태스트 대역, 즉 목과 스텁으로 교체해야 함
+  - 테스트 스위트가 느려지기 때문
+- 하지만 프로세스 외부 의존성이 애플리케이션을 통해서만 접근할 수 있으면, 이러한 의존성과 통신은 시스템에서 식별할 수 있는 동작이 아님
+  - 무슨뜻?
+  - 외부 시스템 간의 통신 패턴을 항상 지켜야 하는 요구 사항은 하위 호환성을 지켜야 한다는 점에서 비롯됨
+  - 그러나 클라이언트가 직접 접근할 수 없으면, 하위 호환성 요구 사항은 사라짐
+  - 외부 시스템과 애플리케이션을 같이 배포할 수 있으면 클라이언트에 영향을 미치지 않을 것임
+  - 이러한 시스템의 통신 패턴은 구현 세부 사항이 됨
+    - db는 외부 시스템도 접근할 수 없고, 따라서 기능을 손상시키지 않는 한 시스템과 애플리케이션 데이터베이스 간의 통신 패턴을 원하는 대로 수정할 수 있음(완전한 통제권)
+    - 즉, 클라이언트 시야에 완전히 숨어있기에, 또한 완전한 통제권을 갖고 있기에, 이러한 프로세스 외부 의존성에 목을 사용하면 깨지기 쉬운 테스트로 이어짐
+    - 데이터베이스와 애플리케이션은 하나의 시스템으로 취급해야 함
+
+### 목을 사용한 동작 검증
+
+클라이언트에게 중요한 것은 도움뿐임.
+
+- 목은 애플리케이션의 경계를 넘나드는 상호 작용을 검증할 때와, 이러한 상호 작용의 사이드 이펙트가 외부 환경에서 보일 때만 동작과 관련이 있음
