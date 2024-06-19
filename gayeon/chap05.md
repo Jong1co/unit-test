@@ -308,4 +308,82 @@ public class UserTest {
 
 전형적인 애플리케이션은 애플리케이션 서비스 레이어와 도메인(비즈니스 로직)레이어로 나뉜다.
 
-애플리케이션 서비스 계층은 도메인 게층 위에 있으며 외부 환경과의 통신을 조정한다. 예시로는 데이터베이스를 조회하거나,
+애플리케이션 서비스 계층은 도메인 계층 위에 있으며 외부 환경과의 통신을 조정한다. 예시로는 데이터베이스를 조회하거나, 연산이 필요하면 도메인으로 호출하거나, DB에 저장한다. 요약하자면 다른 애플리케이션과의 소통과 도메인 로직의 호출을 담당한다.
+
+육각형 아키텍처 또한 지켜야하는 지침이 세가지 있다.
+
+**1. 도메인 계층과 애플리케이션 서비스 계층 간의 관심사 분리**
+   - 도메인 계층은 비즈니스 로직에 대해서만 책임을 져야한다. 외부 애플리케이션과 통신해야하는 책임은 애플리케이션 서비스에서 해야한다. 반대로 애플리케이션 서비스 단에서는 어떤 비즈니스 로직도 있으면 안된다. 요청이 들어 올 시 클래스의 연산으로 변환한 다음 결과를 저장하거나 호출자에게 다시 반환해서 도메인 계층으로 변환해야하는 책임이 있다.
+   - 정리하자면 애플리케이션 서비스 계층은 비즈니스 유스케이스(사용 대상)이며, 도메인 계층은 도메인 지식(사용 방법)의 모음이다.
+
+**2. 애플리케이션 내부 통신**
+   - 육각형 아키텍처는 애플리케이션 서비스 계층에서 도메인 계층으로 흐르는 단방향 의존해야한다.
+   - 도메인 계층 내부 클래스는 내부 클래스끼리 서로 의존하고 서비스 계층의 클래스에 의존하지 않는다.
+   - 이러한 지침에 따르면 애플리케이션 서비스 계층은 도메인 계층에 대해 알지만 반대는 아니다. (의존성 역전 원칙을 지키는 것)
+
+**3. 애플리케이션 간의 통신**
+   - 외부 애플리케이션은 애플리케이션 서비스 계층에 있는 공통 인터페이스를 통해 해당 애플리케이션에 연결된다.(도메인 계층에 직접 접근X)
+
+
+애플리케이션의 각 계층은 식별할 수 있는 동작을 나타낸다. 이러한 동작들은 도메인 로직에서 구현 세부 사항을 포함하고 있다.
+잘 설계된 API원칙에는 프랙탈 특성이 있다. 
+
+각 계층의 API를 잘 설계하면(구현 세부 사항을 숨기면) 테스트도 프랙탈 구조를 갖기 시작한다.
+
+프랙탈 구조를 갖는다는게 무슨 얘기냐면
+애플리케이션 서비스 테스트 = 비즈니스 유스케이스를 검사
+도메인 클래스 테스트 = 유스케이스 완료 방법에 대한 중간의 하위 목표를 검증
+
+테스트가 전체 시스템의 테스트와 유사한 구조를 갖는다는 것을 의미한다. 작은 부분을 테스트하는 방식이 전체 시스템을 테스트하는 방식과 유사하게 조직되는걸 말한다.
+
+예시를 들자면
+
+```
+// 단위테스트
+
+@Test
+    public void testAddItem() {
+        Order order = new Order();
+        order.addItem(new OrderItem("item1", 2, 100.0));
+        assertEquals(1, order.getItems().size());
+    }
+
+// 통합테스트
+
+@Test
+    public void testValidateAndSaveOrder() {
+        OrderRepository mockRepository = mock(OrderRepository.class);
+        OrderService orderService = new OrderService(mockRepository);
+        Order order = new Order();
+        order.addItem(new OrderItem("item1", 2, 100.0));
+
+        orderService.validateAndSaveOrder(order);
+
+        verify(mockRepository, times(1)).save(order);
+    }
+
+// 시스템테스트
+
+@Test
+    public void testCreateOrder() {
+        OrderRepository orderRepository = new InMemoryOrderRepository();
+        OrderService orderService = new OrderService(orderRepository);
+        OrderApplicationService applicationService = new OrderApplicationService(orderRepository, orderService);
+
+        Order order = new Order();
+        order.addItem(new OrderItem("item1", 2, 100.0));
+        applicationService.createOrder(order);
+
+        assertTrue(orderRepository.findAll().contains(order));
+    }
+```
+
+어떤 테스트든 비즈니스 요구사항으로 거슬러 올라 갈 수 있어야한다.
+외부 클라이언트에게 중요한 목표는 개별 도메인 클래스에서 달성한 하위 목표로 변환된다. 따라서 도메인 계층에서 보여지는 식별할 수 있는 동작(공개API)들은 각각의 구체적인 비즈니스 유스케이스와 연관성이 있다.
+
+무슨말인지 알겠어~! 결국 우리가 테스트하는건 식별할 수 있는 동작(공개API)이고 구현 세부 사항(비공개 API)에 대한건 식별할 수 있는 동작에 대한 테스트는 결국 시스템테스트에서 검사하고자하는 것과 똑같다는거잖아~ 
+
+이걸 전문적으로 말하자면 *코드베이스의 공개API를 항상 비즈니스 요구사항에 따라 추적하라*
+
+## 시스템 내부 통신과 시스템 간 통신
+
