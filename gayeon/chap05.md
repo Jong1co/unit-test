@@ -387,3 +387,86 @@ public class UserTest {
 
 ## 시스템 내부 통신과 시스템 간 통신
 
+시스탬 내부 통신이란 애플리케이션 내 클래스 간의 통신이며(구현 세부 사항) 시스템 간 통신은 애플리케이션이 다른 애플리케이션과 통신하는 것을 말한다.(식별할 수 있는 동작)
+
+연산을 수행하기 위한 도메인 클래스 간의 협력은 식별할 수 있는 동작이 아니다. 이러한 협력은 클라이언트의 목표와 관계가 없으므로 결합하면 테스트가 취약해진다.
+
+시스템 외부 환경과 통신하는 방식은 해당 시스템의 식별할 수 있는 동작을 나타낸다. 즉 이러한 동작들은 애플리케이션에 항상 있어야 한다. 시스템 간 통신의 특성은 함께 성장하는 것이다. 즉, 하위 호환성을 보장해야한다.
+
+시스템 내부에서는 리팩터링을 하되, 외부 애플리케이션과 통신할 때 사용하는 통신 패턴은 외부 애플리케이션이 이해할 수 있도록 유지해야한다. (예를 들어 SMTP 호출은 매개변수의 유형과 개수등을 맞춰야 한다.)
+
+이때 목을 사용하면 시스템과 외부 애플리케이션 간의 통신 패턴을 확인하기 좋다. 그러나 목을 시스템내 클래스간의 통신을 검증하는데 쓰면 테스트가 구현 세부 사항과 결합되어 리팩터링 내성 지표가 약해진다.
+
+
+## 시스템 내부 통신과 시스템 간 통신의 예시
+
+비즈니스 유스케이스를 하나 설명하자
+
+- 고객이 상점에서 제품을 구매하려고 한다.
+- 매장 내 제품 수량이 충분하면
+  - 재고가 상점에서 줄어들고
+  - 고객에게 이메일로 영수증을 발송한다
+  - 확인 내역을 반환한다.
+
+
+이에 대해 시스템 간 통신 로직은 이렇게 작성된다.
+
+```
+... controller
+public bool purchase(int customerId, int proudctId, int quantity){
+    // 구매를 시도하고
+    bool isSuccess = customer.Purchase(customerId,proudctId,quantity);
+
+    // 구매를 성공했으면 확인 이메일을 발송
+    if(isSuccess){
+        emailSender.sendReceipt(customerId,proudctId,quantity);
+    }
+
+    return isSuccess;
+}
+
+```
+
+외부 애플리케이션과 도메인 로직을 연결했는데 이 시스템의 목표는 1. 구매와 2. 성공에 대한 확인 내역을 이메일로 받는 것이다. 시스템 내부 통신이 어떻게 동작하지는 신경쓰지 않고 고객의 목표와 직접적인 연관이 있는 동작만 드러난다.
+
+이에 대한 적절한 목 사용의 예제를 보여주겠다
+
+```
+@Test
+    public void testPurchase_Success() {
+        // 목 객체 생성
+        Customer customerMock = mock(Customer.class);
+        EmailSender emailSenderMock = mock(EmailSender.class);
+
+        // 스텁 설정: customer.purchase 메서드가 true를 반환하도록 설정
+        when(customerMock.purchase(1, 1, 1)).thenReturn(true);
+
+        // OrderService 생성
+        OrderService orderService = new OrderService(customerMock, emailSenderMock);
+
+        // 메서드 호출
+        boolean isSuccess = orderService.purchase(1, 1, 1);
+
+        // 결과 검증
+        assertTrue(isSuccess);
+
+        // 목 검증: emailSender.sendReceipt 메서드가 한 번 호출되었는지 확인
+        verify(emailSenderMock, times(1)).sendReceipt(1, 1, 1);
+    }
+```
+
+
+목 객체를 생성하고 설정된 시스템이 구매에 대한 영수증을 보내는지 검증한다.
+하지만 이와 다르게 Customer에서 Store간의 통신을 검증하는 것은 취약한 테스트이다.
+왜냐면 Customer와 Store은 시스템 내부 통신이며 클라이언트가 목표를 달성하는 . 데도움이 되는 연산이나 상태가 아니기 때문이다.
+목표에 직접적인 관련이 있는 멤버는 customer의 purchase메소드와 store의 get inventory 둘뿐이기에 중간단계인 removeInventory같은 메서드의 호출은 고객의 목표로 가는 중간단계임을 알아야 한다.
+
+# 4. 고전파와 런던파의 재고
+
+![alt text](image-8.png)
+
+런던파는 불변 의존성을 제외한 모든 의존성에 목 사용을 권장하며 시스템 내 통신과 시스템간 통신을 구분하지 않는다.
+
+그렇게 되면 테스트는 애플리케이션과 외부 시스템간의 통신을 확인하는 것처럼 클래스 간 통신도 확인한다. 그래서 목을 무분별하게 사용하면 구현 세부 사항에 결합돼 테스트에 리팩터링 내성이 없게 된다.
+
+(이후는 잘 이해못함.. 6,7장에서 다시 나온다고하니까 그때 이해해보는것으로.)
