@@ -159,3 +159,277 @@ public void Adding_a_comment_to_an_article()
 ### 6.3.2 함수형 아키텍처란?
 
 어떠한 사이드 이펙트도 일으키지 않는 애플리케이션을 만들 수는 없음
+
+- 함수형 프로그래밍의 목표는 비즈니스 로직을 처리하는 코드와 사이드 이펙트를 일으키는 코드를 분리하는 것임
+  - 아래 두 가지 코드 유형을 구분하여 비즈니스 로직과 사이드 이펙트를 분리할 수 있음
+  - 결정을 내리는 코드(함수형 코어): 순수 함수
+  - 해당 결정에 따라 작용하는 코드(가변 셸): 모든 결정을 가시적인 부분으로 변환함
+
+함수형 코어와 가변 곌은 다음과 같은 방식으로 협력함
+
+- 가변 셸은 모든 입력을 수집
+- 함수형 코어는 결정을 생성
+- 셸은 결정을 사이드 이펙트로 변환
+
+### 6.3.3 함수형 아키텍처와 육각형 아키텍처 비교
+
+함수형 아키텍처와 육각형 아키텍처는 관심사 분리라는 아이디어를 기반으로 한다. (비슷한 점이 있음)
+
+**유사한 점**
+
+- 관심사 분리
+
+  - 육각형 아키텍처는 도메인 계층과 애플리케이션 서비스 계층으로 구별함
+  - 도메인 계층은 비즈니스 로직에 책임이 있음
+  - 애플리케이션 서비스 계층은 외부 애플리케이션과의 통신에 책임이 있음
+
+- 의존성 간의 단방향 흐름
+  - 도메인 계층이 애플리케이션 서비스 계층에 의존하지 않음
+  - 함수형 또한 코어는 가변 셸에 의존하지 않음
+
+**차이점**
+
+- 사이드 이펙트에 대한 처리
+  - 함수형은 모든 사이드 이펙트를 비즈니스 연산 가장자리로 밀어냄(이 가장자리는 가변 셸이 처리함)
+    - 비즈니스 연산 가장자리로 밀어낸다는 것이 가변 셸로 밀어낸다는 것인지 코어의 가장자리로 밀어낸다는 것인지 잘 모르겠음
+  - 육각형 아키텍처는 도메인 계층으로 인한 사이드 이펙트도 문제 없음 (모든 수정 사항은 도메인 계층 내에 있어야 하며, 계층의 경계를 넘어서는 안 됨)
+
+## 6.4 함수형 아키텍처와 출력 기반 테스트로의 전환
+
+두 가지 리팩터링 단계를 거쳐 전환할 수 있음
+
+- 프로세스 외부 의존성에서 목으로 변경
+  목에서 함수형 아키텍처로 변경
+
+### 6.4.1 감사 시스템 소개
+
+조직의 모든 방문자를 추적하는 감사 시스템
+
+- 텍스트 파일을 기반 저장소로 사용
+- 가장 최근 파일의 마지막 줄에 방문자의 이름과 방문 시간을 추가
+- 파일당 최대 항목 수에 도달하면 인덱스를 증가시켜 새 파일을 작성함
+
+```c#
+public class AuditManager {
+    private readonly int _maxEntriesPerFile;
+    private readonly string _directoryName;
+
+    public AuditManager(int maxEntriesPerFile, string directoryName) {
+        _maxEntriesPerFile = maxEntriesPerFile;
+        _directoryName = directoryName;
+    }
+
+    public void AddRecord(string visitorName, DateTime timeOfVisit) {
+        //파일 목록을 검색
+        string[] filePaths = Directory.GetFiles(_directoryName);
+        //인덱스 별로 정렬
+        (int index, string path)[] sorted = SortByIndex(filePaths);
+
+        string newRecord = visitorName + ';' + timeOfVisit;
+
+        // 파일이 없으면 단일 레코드로 첫 번째 파일을 생성
+        if (sorted.Length == 0) {
+            string newFile = Path.Combine(_directoryName, "audit_1.txt");
+            File.WriteAllText(newFile, newRecord);
+            return;
+        }
+
+        // 파일이 있으면 최신 파일을 가져옴
+        (int currentFileIndex, string currentFilePath) = sorted.Last();
+        List<string> lines = File.ReadAllLines(currentFilePath).ToList();
+
+
+        if (lines.Count < _maxEntriesPerFile) {
+            // 한계에 도달하지 않았다면 레코드 추가
+            lines.Add(newRecord);
+            string newContent = string.Join("\r\n", lines);
+            File.WriteAllText(currentFilePath, newContent);
+        } else {
+            // 한계에 도달했다면 새로운 파일 생성
+            int newIndex = currentFileIndex + 1;
+            string newName = $"audit_{newIndex}.txt";
+            string newFile = Path.Combine(_directoryName, newName);
+            File.WriteAllText(newFile, newRecord);
+        }
+    }
+}
+```
+
+`AuditManager` 클래스는 파일 시스템과 밀접하게 연결돼 있어 테스트가 어려움
+
+- 테스트 전에 파일을 올바른 위치에 배치하고, 테스트가 끝나면 해당 파일을 읽고 내용을 확인한 후 삭제해야 하기 때문
+- 병목 지점은 파일 시스템이고, 이는 테스트 실행 흐름을 방해할 수 있는 공유 의존성임
+- 파일 시스템은 테스트를 느리게 함
+- 로컬 시스템과 빌드 서버 모두 작업 디렉터리가 있고 테스트할 수 있어야 하므로 유지 보수성도 저하됨
+
+### 6.4.2 테스트 파일 시스템에서 분리하기 위한 목 사용
+
+```c#
+public class AuditManager {
+    private readonly int _maxEntriesPerFile;
+    private readonly string _directoryName;
+    private readonly IFileSystem _fileSystem;
+
+    public AuditManager(int maxEntriesPerFile, string directoryName, IFileSystem fileSystem) {
+        _maxEntriesPerFile = maxEntriesPerFile;
+        _directoryName = directoryName;
+        _fileSystem = fileSystem
+    }
+}
+```
+
+위와 같이 `AditManager` 에 `IFileSystem` 을 주입하면 파일 시스템을 목으로 대체가 가능하다.
+
+- 파일 시스템이 분리되므로, 공유 의존성이 사라지고 테스트를 독립적으로 실행할 수 있음
+
+```c#
+[Fact]
+public void A_new_file_is_created_when_the_current_file_overflows() {
+    var fileSystemMock = new Mock<IFileSystem>();
+    fileSystemMock
+        .Setup(x => x.GetFiles("audits"))
+        .Returns(new string[]
+        {
+            @"audits\audit_1.txt",
+            @"audits\audit_2.txt"
+        });
+
+    fileSystemMock
+        .Setup(x => x.ReadAllLines(@"audits\audit_2.txt"))
+        .Returns(new List<string>
+        {
+            "Peter; 2019-04-06T16:30:00",
+            "Jane; 2019-04-06T16:40:00",
+        });
+    var sut = new AuditManager(3, "audits", fileSystemMock.Object);
+
+    sut.AddRecord("Alice", DateTime.Parse("2019-04-06T18:00:00"));
+
+    fileSystemMock.Verify(x => x.WriteAllText(
+        @"audits\audit_3.txt",
+        "Alice;2019-04-06T18:00:00"));
+}
+```
+
+위와 같이 파일 시스템과의 통신과 이러한 통신의 사이드 이펙트(파일 변경)은 애플리케이션의 식별할 수 있는 동작이다.
+
+### 6.4.3 함수형 아키텍처로 리팩터링하기
+
+인터페이스 뒤로 사이드 이펙트를 숨기고 해당 인터페이스를 주입하는 대신, 사이드 이펙트를 클래스 외부로 완전히 이동할 수 있음
+
+```c#
+public class AuditManager {
+    private readonly int _maxEntriesPerFile;
+
+    public AuditManager(int maxEntriesPerFile) {
+        _maxEntriesPerFile = maxEntriesPerFile;
+    }
+
+    public FileUpdate AddRecord(
+        FileContent[] files, // file path 대신 file content 배열을 받음
+        string visitorName,
+        DateTime timeOfVisit) {
+
+        (int index, FileContent file)[] sorted = SortByIndex(files);
+        string newRecord = visitorName + ';' + timeOfVisit;
+        if (sorted.Length == 0) {
+            return new FileUpdate( Returns an update "audit_1.txt", newRecord); // Returns an update instruction
+        }
+
+        (int currentFileIndex, FileContent currentFile) = sorted.Last();
+        List<string> lines = currentFile.Lines.ToList();
+
+        if (lines.Count < _maxEntriesPerFile) {
+            lines.Add(newRecord);
+            string newContent = string.Join("\r\n", lines);
+            return new FileUpdate(currentFile.FileName, newContent); // Returns an update instruction
+        } else {
+            int newIndex = currentFileIndex + 1;
+            string newName = $"audit_{newIndex}.txt";
+            return new FileUpdate(newName, newRecord);
+        }
+    }
+}
+
+// 가변 셸
+public class Persister {
+    public FileContent[] ReadDirectory(string directoryName) {
+        return Directory
+            .GetFiles(directoryName)
+            .Select(x => new FileContent(
+                Path.GetFileName(x),
+                File.ReadAllLines(x)
+                ))
+                .ToArray();
+    }
+
+    public void ApplyUpdate(string directoryName, FileUpdate update) {
+        string filePath = Path.Combine(directoryName, update.FileName);
+        File.WriteAllText(filePath, update.NewContent);
+    }
+}
+```
+
+위와 같이 작성하면
+
+1. Persister 클래스에서는 작업 디렉터리 내용을 읽고
+2. AuditManager에서 받은 업데이트 명령을 작업 디렉터리에서 다시 수행하기만 하면 된다.
+
+이렇게 작성한다면 모든 복잡도는 AuditManager 클래스에 있다.
+
+**AuditManager와 Persister를 붙이려면 애플리케이션 서비스라는 또 다른 클래스가 필요하다**<br/>
+(가변셸 !== 애플리케이션 서비스)
+
+```c#
+public class ApplicationService {
+    private readonly string _directoryName;
+    private readonly AuditManager _auditManager;
+    private readonly Persister _persister;
+
+    public ApplicationService(string directoryName, int maxEntriesPerFile) {
+        _directoryName = directoryName;
+        _auditManager = new AuditManager(maxEntriesPerFile);
+        _persister = new Persister();
+    }
+
+    public void AddRecord(string visitorName, DateTime timeOfVisit) {
+        FileContent[] files = _persister.ReadDirectory(_directoryName);
+        FileUpdate update = _auditManager.AddRecord(files, visitorName, timeOfVisit);
+        _persister.ApplyUpdate(_directoryName, update);
+    }
+}
+```
+
+함수형 코어와 가변 셸을 붙이면서 애플리케이션 서비스가 외부 클라이언트를 위한 시스템의 진입점을 제공함
+
+```c#
+[Fact]
+public void A_new_file_is_created_when_the_current_file_overflows() {
+    var sut = new AuditManager(3);
+    var files = new FileContent[] {
+        new FileContent("audit_1.txt", new string[0]),
+        new FileContent("audit_2.txt", new string[] {
+            "Peter; 2019-04-06T16:30:00",
+            "Jane; 2019-04-06T16:40:00",
+            "Jack; 2019-04-06T17:00:00"
+        })
+    };
+
+    FileUpdate update = sut.AddRecord(files, "Alice", DateTime.Parse("2019-04-06T18:00:00"));
+
+    Assert.Equal("audit_3.txt", update.FileName);
+    Assert.Equal("Alice;2019-04-06T18:00:00", update.NewContent);
+}
+```
+
+위와 같이 이제 검증은 AuditManager가 내린 결정을 검증만 하면 된다.
+
+## 6.5 함수형 아키텍처의 단점
+
+- 프로세스 외부 의존성을 더 많이 호출하여 성능이 떨어짐
+  - 하지만 성능 영향이 그다지 눈에 띄지 않는 일부 시스템에서는 유지 보수성을 향상시키는 편이 좋음
+- 코드베이스 크기 증가
+  - 모든 프로젝트에 초기 투자가 타당할 만큼 복잡도가 높은 것이 아님
+- **함수형 방식에서 순수성에 많은 비용이 든다면 순수성을 따르지 말라.**
+  - 대부분 프로젝트에서는 모든 도메인 모델을 불변으로 할 수 없기 때문에 출력 기반 테스트에만 의존할 수 없음
+  - 대부분의 경우 출력 기반 스타일과 상태 기반 스타일을 조합하며, 통신 기반 스타일을 섞어도 괜찮음
